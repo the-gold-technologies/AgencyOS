@@ -1,0 +1,353 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { X, Paperclip, Loader2, FileText, Download, Trash2, Plus } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { createClient } from '@/lib/supabase/client'
+import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import type { Task, Project, Profile, TaskFile } from '@/types'
+
+const schema = z.object({
+  title: z.string().min(1, 'Required'),
+  description: z.string().optional(),
+  project_id: z.string().optional(),
+  assigned_to: z.string().optional(),
+  deadline: z.string().optional(),
+  priority: z.enum(['low', 'medium', 'high', 'urgent']),
+  status: z.enum(['todo', 'in_progress', 'review', 'completed']),
+})
+
+type FormInput = z.input<typeof schema>
+type FormData = z.output<typeof schema>
+
+interface TaskModalProps {
+  open: boolean
+  onClose: () => void
+  task: Task | null
+  projects: Pick<Project, 'id' | 'name' | 'project_code'>[]
+  profiles: Pick<Profile, 'id' | 'full_name' | 'role'>[]
+  userRole?: string
+}
+
+export default function TaskModal({ open, onClose, task, projects, profiles, userRole }: TaskModalProps) {
+  const supabase = createClient()
+  const qc = useQueryClient()
+  const isEdit = !!task
+  const isRestricted = userRole === 'team_member'
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState(false)
+
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormInput, undefined, FormData>({
+    resolver: zodResolver(schema),
+    defaultValues: { priority: 'medium', status: 'todo' },
+  })
+
+  useEffect(() => {
+    if (open) {
+      reset(task ? {
+        title: task.title,
+        description: task.description ?? '',
+        project_id: task.project_id ?? '',
+        assigned_to: task.assigned_to ?? '',
+        deadline: task.deadline ? task.deadline.split('T')[0] : '',
+        priority: task.priority,
+        status: task.status,
+      } : { priority: 'medium', status: 'todo' })
+      setSelectedFiles([])
+    }
+  }, [open, task, reset])
+
+  const onSubmit = async (data: FormData) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    const payload = {
+      title: data.title,
+      description: data.description || null,
+      project_id: data.project_id || null,
+      assigned_to: data.assigned_to || null,
+      assigned_by: user?.id,
+      deadline: data.deadline ? new Date(data.deadline).toISOString() : null,
+      priority: data.priority,
+      status: data.status,
+    }
+
+    let targetTaskId = isEdit && task ? task.id : ''
+
+    if (isEdit && task) {
+      const { error } = await supabase.from('tasks').update(payload).eq('id', task.id)
+      if (error) { toast.error('Failed to update task'); return }
+      // Log activity
+      await supabase.from('activity_logs').insert({
+        task_id: task.id, action: 'Task Updated', performed_by: user?.id
+      })
+      toast.success('Task updated')
+    } else {
+      const { data: newTask, error } = await supabase.from('tasks').insert(payload).select().single()
+      if (error) { toast.error('Failed to create task'); return }
+      await supabase.from('activity_logs').insert({
+        task_id: newTask.id, action: 'Task Created', performed_by: user?.id
+      })
+      toast.success('Task created')
+      targetTaskId = newTask.id
+    }
+
+    if (targetTaskId && selectedFiles.length > 0) {
+      setUploadingFiles(true)
+      for (const file of selectedFiles) {
+        const fileExt = file.name.split('.').pop()
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
+        const filePath = `tasks/${targetTaskId}/${fileName}`
+        
+        const { error: uploadError } = await supabase.storage.from('agencyos_files').upload(filePath, file)
+        
+        if (!uploadError) {
+          const { data: publicUrlData } = supabase.storage.from('agencyos_files').getPublicUrl(filePath)
+          await supabase.from('task_files').insert({
+            task_id: targetTaskId,
+            file_name: file.name,
+            file_url: publicUrlData.publicUrl,
+            file_size: file.size,
+            uploaded_by: user?.id
+          })
+        }
+      }
+      setUploadingFiles(false)
+    }
+
+    qc.invalidateQueries({ queryKey: ['tasks'] })
+    onClose()
+  }
+
+  const inputClass = "w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={onClose} className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 !m-0" />
+          <motion.div
+            initial={{ opacity: 0, x: 'calc(100% + 1rem)' }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 'calc(100% + 1rem)' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+            className="fixed right-4 top-4 bottom-4 w-[calc(100%-2rem)] max-w-lg bg-bg-secondary border border-border rounded-2xl z-50 flex flex-col shadow-2xl overflow-hidden !m-0"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h3 className="font-semibold text-text">{isEdit ? 'Edit Task' : 'New Task'}</h3>
+              <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text hover:bg-bg-tertiary transition-all">
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Task Title *</label>
+                <input {...register('title')} placeholder="What needs to be done?" className={inputClass} disabled={isRestricted} />
+                {errors.title && <p className="text-xs text-danger mt-1">{errors.title.message}</p>}
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Description</label>
+                <textarea {...register('description')} placeholder="Additional details, references, links..." rows={3}
+                  className={cn(inputClass, 'resize-none')} disabled={isRestricted} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Project</label>
+                  <select {...register('project_id')} className={inputClass} disabled={isRestricted}>
+                    <option value="">No project</option>
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.project_code} — {p.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Assign To</label>
+                  <select {...register('assigned_to')} className={inputClass} disabled={isRestricted}>
+                    <option value="">Unassigned</option>
+                    {profiles.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Priority</label>
+                  <select {...register('priority')} className={inputClass} disabled={isRestricted}>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="urgent">Urgent</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Status</label>
+                  <select {...register('status')} className={inputClass}>
+                    <option value="todo">To Do</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="review">Review</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Deadline</label>
+                <input {...register('deadline')} type="date" className={inputClass} disabled={isRestricted} />
+              </div>
+
+              {/* Attachments Section */}
+              <div className="pt-2 border-t border-border mt-4">
+                <label className="block text-xs font-medium text-text-secondary mb-3">Attachments</label>
+                
+                {/* Existing Files */}
+                {isEdit && task?.files && task.files.length > 0 && (
+                  <div className="space-y-2 mb-3">
+                    {task.files.map(f => {
+                      const isImage = !!f.file_name.match(/\.(jpg|jpeg|png|gif|webp)$/i)
+                      const isPdf = !!f.file_name.match(/\.pdf$/i)
+                      const sizeStr = f.file_size ? `${(f.file_size / 1024 / 1024).toFixed(2)} MB` : 'Unknown size'
+
+                      return (
+                        <div key={f.id} className="flex items-center gap-3 p-2 rounded-xl bg-bg-secondary border border-border">
+                          <div className="w-12 h-12 rounded-lg bg-bg border border-border/50 flex items-center justify-center overflow-hidden shrink-0">
+                            {isImage ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={f.file_url} alt={f.file_name} className="w-full h-full object-cover" />
+                            ) : isPdf ? (
+                              <div className="text-danger flex flex-col items-center justify-center">
+                                <FileText size={18} />
+                                <span className="text-[8px] font-bold uppercase mt-0.5">PDF</span>
+                              </div>
+                            ) : (
+                              <FileText size={18} className="text-text-muted" />
+                            )}
+                          </div>
+                          
+                          <div className="flex-1 overflow-hidden">
+                            <a href={f.file_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-text hover:text-primary truncate block transition-colors">
+                              {f.file_name}
+                            </a>
+                            <p className="text-xs text-text-muted">{sizeStr}</p>
+                          </div>
+
+                          <a href={f.file_url} target="_blank" download className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-bg-tertiary text-text-secondary hover:text-text transition-colors shrink-0">
+                            <Download size={16} />
+                          </a>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Upload Zone */}
+                {((isEdit && task?.files && task.files.length > 0) || selectedFiles.length > 0) ? (
+                  <div className="relative group cursor-pointer inline-flex items-center justify-center gap-2 px-4 py-2 mt-1 bg-bg-secondary border border-border rounded-lg hover:bg-bg-tertiary transition-colors text-sm font-medium text-text">
+                    <input 
+                      type="file" 
+                      multiple 
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        if (e.target.files) {
+                          setSelectedFiles((prev: File[]) => [...prev, ...Array.from(e.target.files!)])
+                        }
+                      }}
+                    />
+                    <Plus size={16} className="text-text-muted" /> Add more files
+                  </div>
+                ) : (
+                  <div className="relative border border-dashed border-border rounded-xl p-4 flex flex-col items-center justify-center text-center hover:border-primary/50 transition-colors bg-bg/50">
+                    <input 
+                      type="file" 
+                      multiple 
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        if (e.target.files) {
+                          setSelectedFiles((prev: File[]) => [...prev, ...Array.from(e.target.files!)])
+                        }
+                      }}
+                    />
+                    <Paperclip size={18} className="text-text-muted mb-2" />
+                    <span className="text-sm font-medium text-text">Click to upload files</span>
+                    <span className="text-xs text-text-muted mt-1">or drag and drop</span>
+                  </div>
+                )}
+
+                {/* Selected Files Preview */}
+                {selectedFiles.length > 0 && (
+                  <div className="space-y-2 mt-3">
+                    {selectedFiles.map((file: File, i: number) => {
+                      const isImage = file.type.startsWith('image/')
+                      const isPdf = file.type === 'application/pdf'
+                      const sizeStr = `${(file.size / 1024 / 1024).toFixed(2)} MB`
+                      
+                      // Create a temporary object URL for preview
+                      const previewUrl = isImage || isPdf ? URL.createObjectURL(file) : ''
+
+                      return (
+                        <div key={i} className="flex items-center gap-3 p-2 rounded-xl bg-bg-secondary border border-border relative overflow-hidden group">
+                          {/* Upload Progress Overlay (Simulated) */}
+                          {uploadingFiles && (
+                            <div className="absolute inset-0 bg-bg/50 backdrop-blur-[1px] flex items-center justify-center z-10">
+                              <Loader2 size={16} className="text-primary animate-spin" />
+                            </div>
+                          )}
+
+                          <div className="w-12 h-12 rounded-lg bg-bg border border-border/50 flex items-center justify-center overflow-hidden shrink-0">
+                            {isImage ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
+                            ) : isPdf ? (
+                              <div className="text-danger flex flex-col items-center justify-center relative w-full h-full group-hover:opacity-20 transition-opacity">
+                                <FileText size={18} />
+                                <span className="text-[8px] font-bold uppercase mt-0.5">PDF</span>
+                              </div>
+                            ) : (
+                              <FileText size={18} className="text-text-muted" />
+                            )}
+                            
+                            {/* If PDF, show small iframe preview on hover? Too heavy. Let's stick to the nice icon. */}
+                          </div>
+                          
+                          <div className="flex-1 overflow-hidden">
+                            <p className="text-sm font-medium text-text truncate">{file.name}</p>
+                            <p className="text-xs text-text-muted">{sizeStr}</p>
+                          </div>
+
+                          <button 
+                            type="button" 
+                            disabled={uploadingFiles}
+                            onClick={() => setSelectedFiles((prev: File[]) => prev.filter((_: File, index: number) => index !== i))} 
+                            className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors shrink-0"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </form>
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
+              <Button variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button onClick={handleSubmit(onSubmit)} loading={isSubmitting || uploadingFiles}>
+                {isSubmitting || uploadingFiles ? 'Saving...' : (isEdit ? 'Save Changes' : 'Create Task')}
+              </Button>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  )
+}
+
+// Need to import cn in this file
+function cn(...classes: (string | undefined | false)[]) {
+  return classes.filter(Boolean).join(' ')
+}

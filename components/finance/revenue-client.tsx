@@ -1,0 +1,146 @@
+'use client'
+
+import { useState } from 'react'
+import { motion } from 'framer-motion'
+import { Plus, Search, Receipt } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
+import { toast } from 'sonner'
+import type { Invoice, Project, Client } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import StatCard from '@/components/ui/stat-card'
+import { formatDate, formatCurrency, INVOICE_STATUS_CONFIG } from '@/lib/utils'
+import InvoiceModal from './invoice-modal'
+import { DollarSign, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
+
+interface RevenueClientProps {
+  initialInvoices: Invoice[]
+  projects: Pick<Project, 'id' | 'name' | 'project_code'>[]
+  clients: Pick<Client, 'id' | 'name'>[]
+}
+
+const STATUS_BADGE_MAP: Record<string, 'default' | 'info' | 'muted' | 'success' | 'warning' | 'danger'> = {
+  paid: 'success',
+  partially_paid: 'warning',
+  pending: 'muted',
+  overdue: 'danger',
+}
+
+export default function RevenueClient({ initialInvoices, projects, clients }: RevenueClientProps) {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null)
+  const qc = useQueryClient()
+  const supabase = createClient()
+
+  const { data: invoices } = useQuery({
+    queryKey: ['invoices'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('invoices')
+        .select('*, project:projects(id,name,project_code), client:clients(id,name)')
+        .order('created_at', { ascending: false })
+      return data as Invoice[]
+    },
+    initialData: initialInvoices,
+  })
+
+  const inv = invoices ?? []
+  const totalBilled = inv.reduce((s, i) => s + (i.final_billing || 0), 0)
+  const totalReceived = inv.reduce((s, i) => s + (i.amount_received || 0), 0)
+  const totalPending = totalBilled - totalReceived
+  const overdueCount = inv.filter(i => i.status === 'overdue').length
+
+  const STATUSES = ['all', 'paid', 'partially_paid', 'pending', 'overdue']
+  const filtered = inv.filter(i => {
+    const matchSearch = (i.invoice_number ?? '').toLowerCase().includes(search.toLowerCase()) ||
+      (i.project?.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
+      (i.client?.name ?? '').toLowerCase().includes(search.toLowerCase())
+    const matchStatus = statusFilter === 'all' || i.status === statusFilter
+    return matchSearch && matchStatus
+  })
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-text">Revenue & Invoices</h2>
+          <p className="text-sm text-text-secondary mt-0.5">{inv.length} total invoices</p>
+        </div>
+        <Button onClick={() => { setEditingInvoice(null); setModalOpen(true) }}>
+          <Plus size={15} /> New Invoice
+        </Button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <StatCard title="Total Billed" value={formatCurrency(totalBilled)} icon={DollarSign} iconColor="bg-primary/10 text-primary" />
+        <StatCard title="Amount Received" value={formatCurrency(totalReceived)} icon={CheckCircle2} iconColor="bg-success/10 text-success" />
+        <StatCard title="Pending Amount" value={formatCurrency(totalPending)} icon={Clock} iconColor="bg-warning/10 text-warning" />
+        <StatCard title="Overdue" value={String(overdueCount)} icon={AlertCircle} iconColor="bg-danger/10 text-danger" />
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search invoices..."
+            className="w-full pl-9 pr-4 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 transition-all" />
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto">
+          {STATUSES.map(s => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${statusFilter === s ? 'bg-primary text-white' : 'bg-bg-secondary border border-border text-text-secondary hover:text-text'}`}>
+              {s === 'all' ? 'All' : INVOICE_STATUS_CONFIG[s as keyof typeof INVOICE_STATUS_CONFIG]?.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Table */}
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center">
+          <Receipt size={36} className="text-text-muted mb-3" />
+          <p className="text-text-secondary font-medium">No invoices found</p>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-bg-tertiary border-b border-border">
+                  {['Invoice #', 'Project', 'Client', 'Billed', 'Received', 'Pending', 'Due Date', 'Status'].map(h => (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-text-secondary uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((inv, idx) => (
+                  <tr key={inv.id} onClick={() => { setEditingInvoice(inv); setModalOpen(true) }}
+                    className="border-b border-border bg-bg-secondary hover:bg-bg-tertiary transition-colors cursor-pointer">
+                    <td className="px-4 py-3 font-medium text-text">{inv.invoice_number}</td>
+                    <td className="px-4 py-3 text-text-secondary">{inv.project?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-text-secondary">{inv.client?.name ?? '—'}</td>
+                    <td className="px-4 py-3 font-medium text-text">{formatCurrency(inv.final_billing)}</td>
+                    <td className="px-4 py-3 text-success">{formatCurrency(inv.amount_received)}</td>
+                    <td className="px-4 py-3 text-warning">{formatCurrency(inv.final_billing - inv.amount_received)}</td>
+                    <td className="px-4 py-3 text-text-secondary">{formatDate(inv.due_date)}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant={STATUS_BADGE_MAP[inv.status]}>
+                        {INVOICE_STATUS_CONFIG[inv.status]?.label}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <InvoiceModal open={modalOpen} onClose={() => setModalOpen(false)} invoice={editingInvoice} projects={projects} clients={clients} />
+    </div>
+  )
+}
