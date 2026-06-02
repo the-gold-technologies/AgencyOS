@@ -21,7 +21,8 @@ import {
   Wallet,
   PanelLeftClose,
   PanelLeft,
-  ChevronDown
+  ChevronDown,
+  Clock
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -75,6 +76,7 @@ const NAV_SECTIONS: NavSection[] = [
     roles: ['admin', 'team_lead', 'team_member', 'sales_executive'],
     items: [
       { href: '/team', icon: UserCog, label: 'Team', roles: ['admin', 'team_lead'] },
+      { href: '/activity', icon: Clock, label: 'Activity Logs', roles: ['admin', 'team_lead'] },
       { href: '/settings', icon: Settings, label: 'Settings', roles: ['admin', 'team_lead', 'team_member', 'sales_executive'] },
     ]
   }

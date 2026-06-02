@@ -13,6 +13,9 @@ import StatCard from '@/components/ui/stat-card'
 import { formatDate, formatCurrency, INVOICE_STATUS_CONFIG } from '@/lib/utils'
 import InvoiceModal from './invoice-modal'
 import { DollarSign, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
+import { parseISO, startOfDay, isSameDay, isSameWeek, isSameMonth, isSameQuarter, isSameYear } from 'date-fns'
+import ExportDropdown from '@/components/ui/export-dropdown'
+import DateFilterDropdown, { DateFilterValue } from '@/components/ui/date-filter-dropdown'
 
 interface RevenueClientProps {
   initialInvoices: Invoice[]
@@ -30,6 +33,9 @@ const STATUS_BADGE_MAP: Record<string, 'default' | 'info' | 'muted' | 'success' 
 export default function RevenueClient({ initialInvoices, projects, clients }: RevenueClientProps) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>('all')
+  const [customDateStart, setCustomDateStart] = useState<Date | null>(null)
+  const [customDateEnd, setCustomDateEnd] = useState<Date | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null)
   const qc = useQueryClient()
@@ -59,8 +65,39 @@ export default function RevenueClient({ initialInvoices, projects, clients }: Re
       (i.project?.name ?? '').toLowerCase().includes(search.toLowerCase()) ||
       (i.client?.name ?? '').toLowerCase().includes(search.toLowerCase())
     const matchStatus = statusFilter === 'all' || i.status === statusFilter
-    return matchSearch && matchStatus
+
+    let matchDate = true
+    if (dateFilter !== 'all' && i.invoice_date) {
+      const expected = startOfDay(new Date(i.invoice_date))
+      const today = startOfDay(new Date())
+      
+      if (dateFilter === 'today') matchDate = isSameDay(expected, today)
+      else if (dateFilter === 'this_week') matchDate = isSameWeek(expected, today)
+      else if (dateFilter === 'this_month') matchDate = isSameMonth(expected, today)
+      else if (dateFilter === 'this_quarter') matchDate = isSameQuarter(expected, today)
+      else if (dateFilter === 'this_year') matchDate = isSameYear(expected, today)
+      else if (dateFilter === 'custom') {
+        if (customDateStart && expected < startOfDay(customDateStart)) matchDate = false
+        if (customDateEnd && expected > startOfDay(customDateEnd)) matchDate = false
+      }
+    } else if (dateFilter !== 'all' && !i.invoice_date) {
+      matchDate = false
+    }
+
+    return matchSearch && matchStatus && matchDate
   })
+
+  const exportHeaders = ['Invoice No', 'Project', 'Client', 'Status', 'Billed', 'Received', 'Date', 'Due Date']
+  const mapExportData = (i: Invoice) => [
+    i.invoice_number || 'N/A',
+    i.project?.name || '—',
+    i.client?.name || '—',
+    i.status,
+    i.final_billing || 0,
+    i.amount_received || 0,
+    i.invoice_date ? formatDate(i.invoice_date) : 'N/A',
+    i.due_date ? formatDate(i.due_date) : 'N/A'
+  ]
 
   return (
     <div className="space-y-5">
@@ -83,19 +120,38 @@ export default function RevenueClient({ initialInvoices, projects, clients }: Re
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search invoices..."
-            className="w-full pl-9 pr-4 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 transition-all" />
+      <div className="flex flex-col sm:flex-row gap-3 justify-between items-center">
+        <div className="flex gap-3 w-full sm:w-auto flex-1">
+          <div className="relative flex-1 max-w-sm">
+            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search invoices..."
+              className="w-full pl-9 pr-4 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 transition-all" />
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {STATUSES.map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${statusFilter === s ? 'bg-primary text-white' : 'bg-bg-secondary border border-border text-text-secondary hover:text-text'}`}>
+                {s === 'all' ? 'All' : INVOICE_STATUS_CONFIG[s as keyof typeof INVOICE_STATUS_CONFIG]?.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
-          {STATUSES.map(s => (
-            <button key={s} onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${statusFilter === s ? 'bg-primary text-white' : 'bg-bg-secondary border border-border text-text-secondary hover:text-text'}`}>
-              {s === 'all' ? 'All' : INVOICE_STATUS_CONFIG[s as keyof typeof INVOICE_STATUS_CONFIG]?.label}
-            </button>
-          ))}
+        <div className="flex gap-3 items-center w-full sm:w-auto">
+          <DateFilterDropdown 
+            value={dateFilter} 
+            onChange={setDateFilter} 
+            onCustomDateChange={(start, end) => {
+              setCustomDateStart(start)
+              setCustomDateEnd(end)
+              setDateFilter('custom')
+            }} 
+          />
+          <ExportDropdown 
+            data={filtered} 
+            headers={exportHeaders} 
+            filename={`revenue_export_${new Date().toISOString().split('T')[0]}`} 
+            mapData={mapExportData} 
+          />
         </div>
       </div>
 

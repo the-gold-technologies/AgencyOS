@@ -6,7 +6,7 @@ import { Plus, Search, FolderKanban, Calendar, User, MoreHorizontal, Pencil, Tra
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { parseISO, startOfDay } from 'date-fns'
+import { parseISO, startOfDay, isSameDay, isSameWeek, isSameMonth, isSameQuarter, isSameYear } from 'date-fns'
 import type { Project, Client, Profile } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -14,6 +14,8 @@ import { formatDate, formatCurrency, PROJECT_STATUS_CONFIG, isOverdue } from '@/
 import ProjectModal from './project-modal'
 import { Glow } from '@/components/ui/glow'
 import { cn } from '@/lib/utils'
+import ExportDropdown from '@/components/ui/export-dropdown'
+import DateFilterDropdown, { DateFilterValue } from '@/components/ui/date-filter-dropdown'
 
 interface ProjectsClientProps {
   initialProjects: Project[]
@@ -33,7 +35,9 @@ const STATUS_BADGE_MAP: Record<string, 'default' | 'info' | 'muted' | 'success' 
 export default function ProjectsClient({ initialProjects, clients, profiles, userRole }: ProjectsClientProps) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [dateFilter, setDateFilter] = useState<'all' | 'this_month' | 'upcoming'>('all')
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>('all')
+  const [customDateStart, setCustomDateStart] = useState<Date | null>(null)
+  const [customDateEnd, setCustomDateEnd] = useState<Date | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const qc = useQueryClient()
@@ -71,46 +75,37 @@ export default function ProjectsClient({ initialProjects, clients, profiles, use
     const matchStatus = statusFilter === 'all' || p.status === statusFilter
     
     let matchDate = true
-    if (dateFilter !== 'all' && p.expected_completion) {
-      const expected = startOfDay(parseISO(p.expected_completion))
+    if (dateFilter !== 'all' && p.created_at) {
+      const expected = startOfDay(new Date(p.created_at))
       const today = startOfDay(new Date())
-      if (dateFilter === 'this_month') {
-        matchDate = expected.getMonth() === today.getMonth() && expected.getFullYear() === today.getFullYear()
+      
+      if (dateFilter === 'today') matchDate = isSameDay(expected, today)
+      else if (dateFilter === 'this_week') matchDate = isSameWeek(expected, today)
+      else if (dateFilter === 'this_month') matchDate = isSameMonth(expected, today)
+      else if (dateFilter === 'this_quarter') matchDate = isSameQuarter(expected, today)
+      else if (dateFilter === 'this_year') matchDate = isSameYear(expected, today)
+      else if (dateFilter === 'custom') {
+        if (customDateStart && expected < startOfDay(customDateStart)) matchDate = false
+        if (customDateEnd && expected > startOfDay(customDateEnd)) matchDate = false
       }
-      if (dateFilter === 'upcoming') {
-        matchDate = expected.getTime() >= today.getTime()
-      }
-    } else if (dateFilter !== 'all' && !p.expected_completion) {
+    } else if (dateFilter !== 'all' && !p.created_at) {
       matchDate = false
     }
 
     return matchSearch && matchStatus && matchDate
   })
 
-  const exportToCSV = () => {
-    const headers = ['Project Code', 'Name', 'Client', 'Status', 'Quoted Price', 'Start Date', 'Expected Completion', 'Team Lead']
-    const rows = filtered.map(p => [
-      p.project_code,
-      p.name,
-      p.client?.name || 'N/A',
-      p.status,
-      p.quoted_price,
-      p.start_date ? new Date(p.start_date).toLocaleDateString() : 'N/A',
-      p.expected_completion ? new Date(p.expected_completion).toLocaleDateString() : 'N/A',
-      p.team_lead?.full_name || 'N/A'
-    ])
-    
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    ].join('\n')
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `projects_export_${new Date().toISOString().split('T')[0]}.csv`
-    link.click()
-  }
+  const exportHeaders = ['Project Code', 'Name', 'Client', 'Status', 'Quoted Price', 'Start Date', 'Expected Completion', 'Team Lead']
+  const mapExportData = (p: Project) => [
+    p.project_code || 'N/A',
+    p.name,
+    p.client?.name || 'N/A',
+    p.status,
+    p.quoted_price || 0,
+    p.start_date ? new Date(p.start_date).toLocaleDateString() : 'N/A',
+    p.expected_completion ? new Date(p.expected_completion).toLocaleDateString() : 'N/A',
+    p.team_lead?.full_name || 'N/A'
+  ]
 
   const containerVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.04 } } }
   const itemVariants = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }
@@ -156,16 +151,21 @@ export default function ProjectsClient({ initialProjects, clients, profiles, use
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value as any)}
-            className="px-3 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50 cursor-pointer"
-          >
-            <option value="all">All Dates</option>
-            <option value="this_month">Completion This Month</option>
-            <option value="upcoming">Upcoming</option>
-          </select>
-          <Button variant="secondary" onClick={exportToCSV}><FileDown size={15} className="mr-2" /> Export</Button>
+          <DateFilterDropdown 
+            value={dateFilter} 
+            onChange={setDateFilter} 
+            onCustomDateChange={(start, end) => {
+              setCustomDateStart(start)
+              setCustomDateEnd(end)
+              setDateFilter('custom')
+            }} 
+          />
+          <ExportDropdown 
+            data={filtered} 
+            headers={exportHeaders} 
+            filename={`projects_export_${new Date().toISOString().split('T')[0]}`} 
+            mapData={mapExportData} 
+          />
         </div>
       </div>
 

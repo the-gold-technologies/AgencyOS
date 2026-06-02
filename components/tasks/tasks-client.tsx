@@ -6,7 +6,7 @@ import { Plus, Search, FileDown, CheckSquare, AlertCircle } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
-import { parseISO, startOfDay } from 'date-fns'
+import { parseISO, startOfDay, isSameDay, isSameWeek, isSameMonth, isSameQuarter, isSameYear } from 'date-fns'
 import type { Task, Project, Profile, TaskStatus } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -14,6 +14,8 @@ import { Glow } from '@/components/ui/glow'
 import { formatDate, isOverdue } from '@/lib/utils'
 import TaskModal from './task-modal'
 import { cn } from '@/lib/utils'
+import ExportDropdown from '@/components/ui/export-dropdown'
+import DateFilterDropdown, { DateFilterValue } from '@/components/ui/date-filter-dropdown'
 
 interface TasksClientProps {
   initialTasks: Task[]
@@ -40,7 +42,9 @@ export default function TasksClient({ initialTasks, projects, profiles, userRole
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [search, setSearch] = useState('')
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'upcoming' | 'overdue'>('all')
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>('all')
+  const [customDateStart, setCustomDateStart] = useState<Date | null>(null)
+  const [customDateEnd, setCustomDateEnd] = useState<Date | null>(null)
   const qc = useQueryClient()
   const supabase = createClient()
 
@@ -75,41 +79,35 @@ export default function TasksClient({ initialTasks, projects, profiles, userRole
                           t.project?.name.toLowerCase().includes(search.toLowerCase()) || ''
                           
     let matchesDate = true
-    if (dateFilter !== 'all' && t.deadline) {
-      const deadline = startOfDay(parseISO(t.deadline))
+    if (dateFilter !== 'all' && t.created_at) {
+      const expected = startOfDay(new Date(t.created_at))
       const today = startOfDay(new Date())
-      if (dateFilter === 'today') matchesDate = deadline.getTime() === today.getTime()
-      if (dateFilter === 'upcoming') matchesDate = deadline.getTime() > today.getTime()
-      if (dateFilter === 'overdue') matchesDate = deadline.getTime() < today.getTime() && t.status !== 'completed'
-    } else if (dateFilter !== 'all' && !t.deadline) {
+      
+      if (dateFilter === 'today') matchesDate = isSameDay(expected, today)
+      else if (dateFilter === 'this_week') matchesDate = isSameWeek(expected, today)
+      else if (dateFilter === 'this_month') matchesDate = isSameMonth(expected, today)
+      else if (dateFilter === 'this_quarter') matchesDate = isSameQuarter(expected, today)
+      else if (dateFilter === 'this_year') matchesDate = isSameYear(expected, today)
+      else if (dateFilter === 'custom') {
+        if (customDateStart && expected < startOfDay(customDateStart)) matchesDate = false
+        if (customDateEnd && expected > startOfDay(customDateEnd)) matchesDate = false
+      }
+    } else if (dateFilter !== 'all' && !t.created_at) {
       matchesDate = false
     }
     return matchesSearch && matchesDate
   })
 
-  const exportToCSV = () => {
-    const headers = ['Title', 'Project', 'Assignee', 'Status', 'Priority', 'Deadline', 'Created At']
-    const rows = filteredTasks.map(t => [
-      t.title,
-      t.project?.name || 'N/A',
-      t.assignee?.full_name || 'Unassigned',
-      t.status,
-      t.priority,
-      t.deadline ? new Date(t.deadline).toLocaleDateString() : 'N/A',
-      new Date(t.created_at).toLocaleDateString()
-    ])
-    
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    ].join('\n')
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `tasks_export_${new Date().toISOString().split('T')[0]}.csv`
-    link.click()
-  }
+  const exportHeaders = ['Title', 'Project', 'Assignee', 'Status', 'Priority', 'Deadline', 'Created At']
+  const mapExportData = (t: Task) => [
+    t.title,
+    t.project?.name || 'N/A',
+    t.assignee?.full_name || 'Unassigned',
+    t.status,
+    t.priority,
+    t.deadline ? new Date(t.deadline).toLocaleDateString() : 'N/A',
+    new Date(t.created_at).toLocaleDateString()
+  ]
 
   const containerVariants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.05 } } }
   const itemVariants = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }
@@ -122,17 +120,21 @@ export default function TasksClient({ initialTasks, projects, profiles, userRole
           <p className="text-sm text-text-secondary mt-0.5">{tasks?.length ?? 0} total tasks</p>
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value as 'all' | 'today' | 'upcoming' | 'overdue')}
-            className="px-3 py-2 bg-bg-secondary border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50 cursor-pointer"
-          >
-            <option value="all">All Dates</option>
-            <option value="today">Today</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="overdue">Overdue</option>
-          </select>
-          <Button variant="secondary" onClick={exportToCSV}><FileDown size={15} className="mr-2" /> Export</Button>
+          <DateFilterDropdown 
+            value={dateFilter} 
+            onChange={setDateFilter} 
+            onCustomDateChange={(start, end) => {
+              setCustomDateStart(start)
+              setCustomDateEnd(end)
+              setDateFilter('custom')
+            }} 
+          />
+          <ExportDropdown 
+            data={filteredTasks} 
+            headers={exportHeaders} 
+            filename={`tasks_export_${new Date().toISOString().split('T')[0]}`} 
+            mapData={mapExportData} 
+          />
           <Button onClick={() => { setEditingTask(null); setModalOpen(true) }}>
             <Plus size={15} /> New Task
           </Button>

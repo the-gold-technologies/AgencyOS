@@ -35,6 +35,7 @@ export default function TopBar({ user }: TopBarProps) {
     if (path.startsWith('/analytics')) return ['Growth', 'Analytics']
     if (path.startsWith('/team')) return ['System', 'Team']
     if (path.startsWith('/settings')) return ['System', 'Settings']
+    if (path.startsWith('/activity')) return ['System', 'Activity Logs']
     return ['Dashboard']
   }
 

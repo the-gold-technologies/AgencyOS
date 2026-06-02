@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { X } from 'lucide-react'
+import { X, UploadCloud, FileText } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createClient } from '@/lib/supabase/client'
 import { useQueryClient } from '@tanstack/react-query'
@@ -40,6 +40,9 @@ export default function ProjectModal({ open, onClose, project, clients, profiles
   const supabase = createClient()
   const qc = useQueryClient()
   const isEdit = !!project
+  
+  const [file, setFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
 
   const teamLeads = profiles.filter(p => ['admin', 'team_lead'].includes(p.role))
 
@@ -50,6 +53,7 @@ export default function ProjectModal({ open, onClose, project, clients, profiles
 
   useEffect(() => {
     if (open) {
+      setFile(null)
       reset(project ? {
         name: project.name,
         client_id: project.client_id ?? '',
@@ -73,21 +77,45 @@ export default function ProjectModal({ open, onClose, project, clients, profiles
       expected_completion: data.expected_completion || null,
       team_lead_id: data.team_lead_id || null,
       status: data.status,
-    }
+    } as any
 
-    if (isEdit && project) {
-      const { error } = await supabase.from('projects').update(payload).eq('id', project.id)
-      if (error) { toast.error('Failed to update project'); return }
-      toast.success('Project updated')
-    } else {
-      const { data: { user } } = await supabase.auth.getUser()
-      const { error } = await supabase.from('projects').insert({ ...payload, created_by: user?.id })
-      if (error) { toast.error('Failed to create project'); return }
-      toast.success('Project created')
-    }
+    setIsUploading(true)
+    try {
+      if (file) {
+        const fileExt = file.name.split('.').pop()
+        const fileName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${fileExt}`
+        const filePath = `deliverables/${fileName}`
 
-    qc.invalidateQueries({ queryKey: ['projects'] })
-    onClose()
+        const { error: uploadError } = await supabase.storage.from('agencyos_files').upload(filePath, file)
+        
+        if (uploadError) {
+          toast.error('Failed to upload deliverable file')
+          console.error(uploadError)
+        } else {
+          const { data: publicUrlData } = supabase.storage.from('agencyos_files').getPublicUrl(filePath)
+          payload.deliverable_url = publicUrlData.publicUrl
+        }
+      }
+
+      if (isEdit) {
+        if (data.status === 'completed' && !project?.completion_date) {
+          payload.completion_date = new Date().toISOString()
+        }
+        const { error } = await supabase.from('projects').update(payload).eq('id', project.id)
+        if (error) { toast.error('Failed to update project'); return }
+        toast.success('Project updated')
+      } else {
+        const { data: { user } } = await supabase.auth.getUser()
+        const { error } = await supabase.from('projects').insert({ ...payload, created_by: user?.id })
+        if (error) { toast.error('Failed to create project'); return }
+        toast.success('Project created')
+      }
+
+      qc.invalidateQueries({ queryKey: ['projects'] })
+      onClose()
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   const inputClass = "w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
@@ -172,11 +200,45 @@ export default function ProjectModal({ open, onClose, project, clients, profiles
                   {teamLeads.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}
                 </select>
               </div>
+
+              {/* File Upload for Deliverables */}
+              <div className="pt-2">
+                <label className="block text-xs font-medium text-text-secondary mb-1.5">Final Deliverable (Optional)</label>
+                
+                {project?.deliverable_url && !file && (
+                  <div className="mb-3 p-3 bg-bg border border-border rounded-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2 overflow-hidden">
+                      <FileText size={16} className="text-primary shrink-0" />
+                      <span className="text-sm text-text truncate">Existing Deliverable File</span>
+                    </div>
+                    <a href={project.deliverable_url} target="_blank" className="text-xs font-medium text-primary hover:underline whitespace-nowrap">View</a>
+                  </div>
+                )}
+
+                <div className="relative border border-dashed border-border rounded-xl p-4 flex flex-col items-center justify-center text-center hover:border-primary/50 transition-colors bg-bg/50">
+                  <input 
+                    type="file" 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        setFile(e.target.files[0])
+                      }
+                    }}
+                  />
+                  <div className="w-10 h-10 rounded-full bg-bg border border-border flex items-center justify-center mb-2 shadow-sm group-hover:scale-105 transition-transform text-text-muted">
+                    <UploadCloud size={18} />
+                  </div>
+                  <p className="text-sm font-medium text-text">
+                    {file ? file.name : (project?.deliverable_url ? 'Replace deliverable file' : 'Click or drag file to upload')}
+                  </p>
+                  <p className="text-[11px] text-text-muted mt-0.5">Upload final project files/zip</p>
+                </div>
+              </div>
             </form>
 
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
-              <Button variant="secondary" onClick={onClose}>Cancel</Button>
-              <Button onClick={handleSubmit(onSubmit)} loading={isSubmitting}>
+              <Button variant="secondary" onClick={onClose} disabled={isSubmitting || isUploading}>Cancel</Button>
+              <Button onClick={handleSubmit(onSubmit)} loading={isSubmitting || isUploading}>
                 {isEdit ? 'Save Changes' : 'Create Project'}
               </Button>
             </div>

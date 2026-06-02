@@ -44,6 +44,7 @@ export interface Project {
   status: ProjectStatus
   delivery_date?: string
   completion_date?: string
+  deliverable_url?: string
   created_by?: string
   created_at: string
   updated_at: string
