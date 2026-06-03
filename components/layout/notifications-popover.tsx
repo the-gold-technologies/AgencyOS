@@ -78,7 +78,9 @@ export default function NotificationsPopover() {
       >
         <Bell size={15} />
         {unreadCount > 0 && (
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full border border-bg-secondary" />
+          <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 border-2 border-bg-secondary shadow-sm">
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
         )}
       </button>
 

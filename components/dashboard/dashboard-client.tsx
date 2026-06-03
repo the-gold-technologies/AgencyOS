@@ -68,7 +68,6 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
 
   useEffect(() => {
     if (searchParams?.get('login') === 'success') {
-      toast.success('Welcome back to your workspace!', { duration: 4000 })
       router.replace('/')
     }
   }, [searchParams, router])
