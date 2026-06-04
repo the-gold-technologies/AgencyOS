@@ -1,5 +1,5 @@
 import TargetsClient from '@/components/targets/targets-client'
-import { getSalesTargets } from '@/app/actions/targets'
+import { getSalesTargets, getSalesClosures } from '@/app/actions/targets'
 import prisma from '@/lib/prisma'
 
 export default async function TargetsPage() {
@@ -8,18 +8,8 @@ export default async function TargetsPage() {
   const targets = await getSalesTargets()
   const currentYearTargets = targets.filter(t => t.year === now.getFullYear())
   
-  const closures = await prisma.salesClosure.findMany({
-    include: {
-      closer: { select: { name: true } },
-      client: { select: { name: true } }
-    },
-    orderBy: { closed_at: 'desc' }
-  })
-  
-  const formattedClosures = closures.map(c => ({
-    ...c,
-    closer: c.closer ? { full_name: c.closer.name } : null
-  }))
+  const closures = await getSalesClosures()
+  const formattedClosures = closures
 
   const profiles = await prisma.user.findMany({
     where: { role: { in: ['admin', 'sales_executive'] } },

@@ -112,6 +112,7 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
               sparkData={revenueSparkData}
               sparkType="bar"
               sparkColor="#6366F1"
+              href="/finance/revenue"
             />
             <StatCard
               title="Net Profit"
@@ -123,6 +124,7 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
               sparkData={profitSparkData}
               sparkType="area"
               sparkColor="#10B981"
+              href="/profitability"
             />
             <StatCard
               title="Total Expenses"
@@ -134,6 +136,7 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
               sparkData={expensesTrend}
               sparkType="area"
               sparkColor="#EF4444"
+              href="/finance/expenses"
             />
           </>
         )}
@@ -148,6 +151,7 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
               sparkData={activeProjectsTrend}
               sparkType="bar"
               sparkColor="#06B6D4"
+              href="/projects"
             />
             <StatCard
               title="Completed Projects"
@@ -157,6 +161,7 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
               sparkData={completedProjectsTrend}
               sparkType="bar"
               sparkColor="#10B981"
+              href="/projects?status=completed"
             />
           </>
         )}
@@ -170,11 +175,15 @@ function DashboardContent({ data, userRole }: DashboardClientProps) {
             sparkData={pendingTrend}
             sparkType="area"
             sparkColor="#F59E0B"
+            href="/finance/revenue"
           />
         )}
         {/* Monthly Target card */}
         {isSalesVisible && (
-        <div className="col-span-2 rounded-xl bg-bg-secondary border border-border p-5 hover:border-border-muted transition-all relative overflow-hidden group">
+        <div 
+          onClick={() => router.push('/targets')}
+          className="col-span-2 rounded-xl bg-bg-secondary border border-border p-5 hover:border-border-muted transition-all relative overflow-hidden group cursor-pointer hover:bg-bg-tertiary shadow-sm hover:shadow-md"
+        >
           <Glow />
           <div className="relative z-10">
             <div className="flex items-start justify-between mb-3">

@@ -284,6 +284,7 @@ model SalesTarget {
   month        Int
   year         Int
   target_count Int
+  average_cost Float    @default(0)
   created_by   String?
 
   createdAt    DateTime @default(now())

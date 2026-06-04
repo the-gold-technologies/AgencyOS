@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Target, X } from 'lucide-react'
+import { Plus, Target, X, Trash2 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { useForm } from 'react-hook-form'
@@ -12,18 +12,21 @@ import { AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import type { SalesTarget, SalesClosure, Profile } from '@/types'
 import { Button } from '@/components/ui/button'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { SERVICE_TYPES } from '@/lib/utils'
 import { formatDateTime } from '@/lib/utils'
 import { cn } from '@/lib/utils'
-import { upsertTarget as upsertTargetAction, getSalesTargets, getSalesClosures } from '@/app/actions/targets'
+import { upsertTarget as upsertTargetAction, getSalesTargets, getSalesClosures, deleteTarget } from '@/app/actions/targets'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 const targetSchema = z.object({
+  id: z.string().optional(),
   service_type: z.string().min(1),
   month: z.coerce.number().min(1).max(12),
   year: z.coerce.number(),
   target_count: z.coerce.number().min(1),
+  average_cost: z.coerce.number().min(0).default(0),
 })
 
 type TargetFormInput = z.input<typeof targetSchema>
@@ -37,6 +40,7 @@ interface TargetsClientProps {
 
 export default function TargetsClient({ initialTargets, initialClosures, profiles }: TargetsClientProps) {
   const [addTargetOpen, setAddTargetOpen] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const qc = useQueryClient()
   const supabase = createClient()
   const now = new Date()
@@ -59,10 +63,36 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
     initialData: initialClosures,
   })
 
-  const { register, handleSubmit, reset, formState: { isSubmitting } } = useForm<TargetFormInput, undefined, TargetFormData>({
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const { register, handleSubmit, reset, getValues, formState: { isSubmitting } } = useForm<TargetFormInput, undefined, TargetFormData>({
     resolver: zodResolver(targetSchema),
-    defaultValues: { month: now.getMonth() + 1, year: now.getFullYear(), target_count: 10 },
+    defaultValues: { month: now.getMonth() + 1, year: now.getFullYear() },
   })
+
+  const openNewTarget = () => {
+    reset({
+      id: undefined,
+      service_type: SERVICE_TYPES[0],
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+      target_count: '' as any,
+      average_cost: '' as any
+    })
+    setAddTargetOpen(true)
+  }
+
+  const editTarget = (t: SalesTarget) => {
+    reset({
+      id: t.id,
+      service_type: t.service_type,
+      month: t.month,
+      year: t.year,
+      target_count: t.target_count,
+      average_cost: t.average_cost || 0
+    })
+    setAddTargetOpen(true)
+  }
 
   const onSubmitTarget = async (data: TargetFormData) => {
     const result = await upsertTargetAction(data)
@@ -73,12 +103,30 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
     reset()
   }
 
-  // Group closures by target
-  const closuresByTarget = (closures ?? []).reduce((acc, c) => {
-    if (!acc[c.target_id]) acc[c.target_id] = 0
-    acc[c.target_id]++
+  const handleDeleteClick = () => {
+    if (getValues('id')) setShowDeleteConfirm(true)
+  }
+
+  const confirmDelete = async () => {
+    const id = getValues('id')
+    if (!id) return
+    setIsDeleting(true)
+    const result = await deleteTarget(id)
+    setIsDeleting(false)
+    setShowDeleteConfirm(false)
+    if (!result.success) { toast.error(result.error); return }
+    toast.success('Target deleted!')
+    qc.invalidateQueries({ queryKey: ['sales_targets'] })
+    setAddTargetOpen(false)
+  }
+
+  // Group closures by target and calculate actual revenue
+  const closuresStats = (closures ?? []).reduce((acc, c) => {
+    if (!acc[c.target_id]) acc[c.target_id] = { count: 0, revenue: 0 }
+    acc[c.target_id].count++
+    acc[c.target_id].revenue += c.project?.quoted_price || 0
     return acc
-  }, {} as Record<string, number>)
+  }, {} as Record<string, { count: number, revenue: number }>)
 
   const inputClass = "w-full px-3 py-2 bg-bg border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 transition-all"
 
@@ -89,7 +137,7 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
           <h2 className="text-xl font-bold text-text">Sales Targets - {now.getFullYear()}</h2>
           <p className="text-sm text-text-secondary mt-0.5">Monthly service-wise targets and achievements</p>
         </div>
-        <Button onClick={() => setAddTargetOpen(true)}><Plus size={15} /> Set Target</Button>
+        <Button onClick={openNewTarget}><Plus size={15} /> Set Target</Button>
       </div>
 
       {/* Targets grid */}
@@ -102,12 +150,17 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {(targets ?? []).map(t => {
-            const achieved = closuresByTarget[t.id] ?? 0
+            const stats = closuresStats[t.id] || { count: 0, revenue: 0 }
+            const achieved = stats.count
             const remaining = Math.max(0, t.target_count - achieved)
             const pct = t.target_count > 0 ? Math.min(Math.round((achieved / t.target_count) * 100), 100) : 0
+            const totalRevenueTarget = t.target_count * (t.average_cost || 0)
+            const achievedRevenue = stats.revenue
+            
             return (
               <motion.div key={t.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                className="bg-bg-secondary border border-border rounded-xl p-5 hover:border-border-muted transition-all">
+                onClick={() => editTarget(t)}
+                className="bg-bg-secondary border border-border rounded-xl p-5 hover:border-border-muted transition-all cursor-pointer hover:bg-bg-tertiary">
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <p className="font-semibold text-text text-sm">{t.service_type}</p>
@@ -118,9 +171,17 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
                   </span>
                 </div>
 
-                <div className="flex items-end gap-2 mb-3">
-                  <span className="text-3xl font-bold text-text">{achieved}</span>
-                  <span className="text-text-muted text-sm pb-1">/ {t.target_count}</span>
+                <div className="flex items-end justify-between mb-3">
+                  <div className="flex items-end gap-2">
+                    <span className="text-3xl font-bold text-text">{achieved}</span>
+                    <span className="text-text-muted text-sm pb-1">/ {t.target_count}</span>
+                  </div>
+                  {t.average_cost ? (
+                    <div className="text-right">
+                      <p className="text-xs text-text-muted">Target Rev.</p>
+                      <p className="text-sm font-semibold text-text">₹{totalRevenueTarget.toLocaleString('en-IN')}</p>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="h-2 bg-bg-tertiary rounded-full overflow-hidden mb-3">
@@ -133,8 +194,8 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
                 </div>
 
                 <div className="flex justify-between text-xs text-text-muted">
-                  <span>Achieved: <span className="text-text font-medium">{achieved}</span></span>
-                  <span>Remaining: <span className="text-text font-medium">{remaining}</span></span>
+                  <span>Achieved: <span className="text-text font-medium">{achieved}</span> <span className="text-text font-medium">(₹{achievedRevenue.toLocaleString('en-IN')})</span></span>
+                  <span>Remaining: <span className="text-text font-medium">{remaining}</span> <span className="text-text font-medium">(₹{Math.max(0, totalRevenueTarget - achievedRevenue).toLocaleString('en-IN')})</span></span>
                 </div>
               </motion.div>
             )
@@ -198,19 +259,44 @@ export default function TargetsClient({ initialTargets, initialClosures, profile
                     <input {...register('year')} type="number" className={inputClass} />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Target Count</label>
-                  <input {...register('target_count')} type="number" min="1" placeholder="10" className={inputClass} />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Target Count</label>
+                    <input {...register('target_count')} type="number" min="1" placeholder="10" className={inputClass} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Average Cost (₹)</label>
+                    <input {...register('average_cost')} type="number" min="0" placeholder="25000" className={inputClass} />
+                  </div>
                 </div>
               </form>
-              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border mt-auto">
-                <Button variant="secondary" type="button" onClick={() => setAddTargetOpen(false)}>Cancel</Button>
-                <Button onClick={handleSubmit(onSubmitTarget)} loading={isSubmitting}>Set Target</Button>
+              <div className="flex items-center justify-between px-6 py-4 border-t border-border mt-auto">
+                <div>
+                  {getValues('id') && (
+                    <Button variant="danger" type="button" onClick={handleDeleteClick} className="bg-danger/10 text-danger hover:bg-danger/20">
+                      <Trash2 size={15} className="mr-1.5" /> Delete
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button variant="secondary" type="button" onClick={() => setAddTargetOpen(false)}>Cancel</Button>
+                  <Button onClick={handleSubmit(onSubmitTarget)} loading={isSubmitting}>Set Target</Button>
+                </div>
               </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={confirmDelete}
+        title="Delete Sales Target"
+        description="Are you sure you want to delete this sales target? This action cannot be undone, but existing closures will not be deleted."
+        confirmText="Delete Target"
+        loading={isDeleting}
+      />
     </div>
   )
 }

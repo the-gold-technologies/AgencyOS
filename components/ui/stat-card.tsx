@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ResponsiveContainer, AreaChart, Area, Tooltip, BarChart, Bar } from 'recharts'
+import Link from 'next/link'
 
 interface StatCardProps {
   title: string
@@ -15,6 +16,7 @@ interface StatCardProps {
   sparkData?: number[]
   sparkType?: 'area' | 'bar'
   sparkColor?: string
+  href?: string
 }
 
 export default function StatCard({
@@ -28,6 +30,7 @@ export default function StatCard({
   sparkData,
   sparkType = 'area',
   sparkColor,
+  href,
 }: StatCardProps) {
   const isPositive = change !== undefined && change >= 0
   const defaultColor = isPositive ? '#10B981' : '#EF4444'
@@ -35,14 +38,17 @@ export default function StatCard({
 
   const chartData = sparkData?.map((v, i) => ({ v, i })) ?? []
 
-  return (
-    <div
-      className={cn(
-        'relative overflow-hidden rounded-xl bg-bg-secondary border border-border px-4 pb-4 pt-2',
-        'hover:border-border-muted transition-all duration-200 group flex flex-col justify-between gap-3',
-        className
-      )}
-    >
+  const wrapperProps = {
+    className: cn(
+      'relative overflow-hidden rounded-xl bg-bg-secondary border border-border px-4 pb-4 pt-2',
+      'hover:border-border-muted transition-all duration-200 group flex flex-col justify-between gap-3',
+      href && 'cursor-pointer hover:bg-bg-tertiary shadow-sm hover:shadow-md',
+      className
+    )
+  }
+
+  const content = (
+    <>
       {/* TOP ROW: Icon circle + Title */}
       <div className="flex items-center gap-2">
         {Icon && (
@@ -139,6 +145,16 @@ export default function StatCard({
 
       {/* Decorative orange glow */}
       <div className="absolute -bottom-8 -right-8 w-32 h-32 rounded-full opacity-20 group-hover:opacity-30 bg-orange-500/20 transition-opacity duration-300 blur-3xl pointer-events-none" />
+    </>
+  )
+
+  return href ? (
+    <Link href={href} {...wrapperProps}>
+      {content}
+    </Link>
+  ) : (
+    <div {...wrapperProps}>
+      {content}
     </div>
   )
 }

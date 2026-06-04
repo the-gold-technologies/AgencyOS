@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache'
 export async function getSalesTargets() {
   try {
     const targets = await prisma.salesTarget.findMany({
-      orderBy: [{ year: 'desc' }, { month: 'desc' }]
+      orderBy: { createdAt: 'desc' }
     })
     return targets
   } catch (error) {
@@ -20,7 +20,8 @@ export async function getSalesClosures() {
     const closures = await prisma.salesClosure.findMany({
       include: {
         closer: { select: { name: true } },
-        client: { select: { name: true } }
+        client: { select: { name: true } },
+        project: { select: { name: true, quoted_price: true } }
       },
       orderBy: { closed_at: 'desc' }
     })
@@ -48,7 +49,8 @@ export async function upsertTarget(data: any) {
         }
       },
       update: {
-        target_count: data.target_count
+        target_count: data.target_count,
+        average_cost: data.average_cost
       },
       create: {
         ...data,
@@ -60,5 +62,18 @@ export async function upsertTarget(data: any) {
   } catch (error) {
     console.error('Error upserting target:', error)
     return { success: false, error: 'Failed to set target' }
+  }
+}
+
+export async function deleteTarget(id: string) {
+  try {
+    await prisma.salesTarget.delete({
+      where: { id }
+    })
+    revalidatePath('/targets')
+    return { success: true }
+  } catch (error) {
+    console.error('Error deleting target:', error)
+    return { success: false, error: 'Failed to delete target' }
   }
 }

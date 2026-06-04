@@ -138,6 +138,7 @@ export interface SalesTarget {
   month: number
   year: number
   target_count: number
+  average_cost?: number
   created_by?: string
   createdAt: string
   // Computed

@@ -72,7 +72,35 @@ export async function createProject(data: any) {
       })
     }
     
+    // Automatically record a SalesClosure if there's an active target for this service type this month
+    if (restData.service_type) {
+      const now = new Date()
+      const currentMonth = now.getMonth() + 1
+      const currentYear = now.getFullYear()
+      
+      const target = await prisma.salesTarget.findFirst({
+        where: {
+          service_type: restData.service_type,
+          month: currentMonth,
+          year: currentYear
+        }
+      })
+
+      if (target) {
+        await prisma.salesClosure.create({
+          data: {
+            target_id: target.id,
+            closed_by: session?.user?.id,
+            client_id: client_id || undefined,
+            project_id: project.id,
+          }
+        })
+      }
+    }
+
     revalidatePath('/projects')
+    revalidatePath('/targets') // Revalidate targets page as well
+    revalidatePath('/') // Dashboard might also show targets
     return { success: true, project }
   } catch (error) {
     console.error('Error creating project:', error)
