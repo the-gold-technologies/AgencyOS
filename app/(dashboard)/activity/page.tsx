@@ -5,7 +5,7 @@ import { auth } from '@/auth'
 import prisma from '@/lib/prisma'
 
 export const metadata = {
-  title: 'Activity Logs | AgencyOS',
+  title: 'Activity Logs | TGT',
 }
 
 export default async function ActivityPage() {

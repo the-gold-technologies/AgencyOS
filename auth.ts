@@ -5,6 +5,8 @@ import prisma from "./lib/prisma"
 import bcrypt from "bcryptjs"
 import { $Enums } from "@prisma/client"
 
+import Google from "next-auth/providers/google"
+
 declare module "next-auth" {
   interface User {
     id?: string;
@@ -19,8 +21,13 @@ declare module "next-auth" {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  adapter: PrismaAdapter(prisma),
   session: { strategy: "jwt" },
   providers: [
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET,
+    }),
     Credentials({
       name: "Credentials",
       credentials: {

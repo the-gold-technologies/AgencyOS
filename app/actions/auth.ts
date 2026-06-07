@@ -23,3 +23,7 @@ export async function loginAction(prevState: any, formData: FormData) {
     throw error // Important: Next.js redirect must be rethrown
   }
 }
+
+export async function signInWithGoogle() {
+  await signIn('google', { redirectTo: '/?login=success' })
+}

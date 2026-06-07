@@ -6,7 +6,7 @@ import { ThemeProvider } from '@/components/providers/theme-provider'
 import { AuthProvider } from '@/components/providers/session-provider'
 
 export const metadata: Metadata = {
-  title: 'AgencyOS - Business Management Platform',
+  title: 'TGT - Business Management Platform',
   description: 'Manage clients, projects, tasks, revenue and team performance in one place.',
 }
 

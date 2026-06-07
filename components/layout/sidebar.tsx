@@ -119,9 +119,9 @@ export default function Sidebar({ userRole = 'admin' }: SidebarProps) {
             transition={{ duration: 0.15 }}
             className="flex items-center gap-2.5 shrink-0"
           >
-            {/* <img src="/logo.png" alt="AgencyOS" className="w-10 h-10 rounded-lg object-contain" /> */}
+            <img src="/logo.jpg" alt="TGT" className="w-10 h-10 rounded-full object-cover" />
             <span className="text-md font-bold tracking-tight text-text whitespace-nowrap ml-2">
-              AgencyOS
+              TGT
             </span>
           </motion.div>
         )}
