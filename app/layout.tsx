@@ -8,6 +8,9 @@ import { AuthProvider } from '@/components/providers/session-provider'
 export const metadata: Metadata = {
   title: 'TGT - Business Management Platform',
   description: 'Manage clients, projects, tasks, revenue and team performance in one place.',
+  icons: {
+    icon: '/logo.jpg',
+  },
 }
 
 export default function RootLayout({
